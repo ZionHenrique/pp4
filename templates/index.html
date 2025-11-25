@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Análise Nutricional por Imagem</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .content {
+            padding: 40px;
+        }
+        
+        .upload-section {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        
+        .upload-area {
+            border: 3px dashed #667eea;
+            border-radius: 15px;
+            padding: 40px;
+            margin: 20px 0;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .upload-area:hover {
+            background: #f0f0f0;
+            border-color: #764ba2;
+        }
+        
+        .upload-area.dragover {
+            background: #e8e8ff;
+            border-color: #764ba2;
+        }
+        
+        #fileInput {
+            display: none;
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: transform 0.2s;
+        }
+        
+        .btn:hover {
+            transform: scale(1.05);
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .result-section {
+            display: none;
+            margin-top: 30px;
+        }
+        
+        .result-card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            margin: 20px 0;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        
+        .result-image {
+            max-width: 100%;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+        
+        .nutrition-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        
+        .nutrition-table th,
+        .nutrition-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        .nutrition-table th {
+            background: #667eea;
+            color: white;
+        }
+        
+        .nutrition-table tr:hover {
+            background: #f5f5f5;
+        }
+        
+        .confidence-badge {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            background: #28a745;
+            color: white;
+            font-weight: bold;
+        }
+        
+        .manual-add-section {
+            background: #fff3cd;
+            border: 2px solid #ffc107;
+            border-radius: 15px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        
+        .form-group {
+            margin: 15px 0;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        
+        .form-group input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        
+        .meals-section {
+            margin-top: 40px;
+        }
+        
+        .meal-card {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 15px 0;
+            border-left: 4px solid #667eea;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+        
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+        
+        .success {
+            background: #d4edda;
+            color: #155724;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🍽️ Análise Nutricional por Imagem</h1>
+            <p>Faça upload de uma foto de comida e receba informações nutricionais</p>
+        </div>
+        
+        <div class="content">
+            <!-- Seção de Upload -->
+            <div class="upload-section">
+                <h2>Upload de Imagem</h2>
+                <div class="upload-area" id="uploadArea">
+                    <p>📷 Clique ou arraste uma imagem aqui</p>
+                    <input type="file" id="fileInput" accept="image/*">
+                </div>
+                <button class="btn" id="uploadBtn" disabled>Analisar Imagem</button>
+                <div class="loading" id="loading">
+                    <div class="spinner"></div>
+                    <p>Processando imagem...</p>
+                </div>
+            </div>
+            
+            <!-- Seção de Resultados -->
+            <div class="result-section" id="resultSection">
+                <div class="result-card">
+                    <h3>Resultado da Análise</h3>
+                    <div id="resultContent"></div>
+                </div>
+                
+                <!-- Seção para adicionar alimento manualmente -->
+                <div class="manual-add-section" id="manualAddSection" style="display: none;">
+                    <h3>➕ Adicionar Alimento Manualmente</h3>
+                    <p>O alimento não foi reconhecido? Adicione manualmente:</p>
+                    <div class="form-group">
+                        <label>Nome do Alimento:</label>
+                        <input type="text" id="manualNome" placeholder="Ex: Arroz branco">
+                    </div>
+                    <div class="form-group">
+                        <label>Calorias (kcal):</label>
+                        <input type="number" id="manualCalorias" placeholder="130">
+                    </div>
+                    <div class="form-group">
+                        <label>Proteínas (g):</label>
+                        <input type="number" id="manualProteinas" placeholder="2.7">
+                    </div>
+                    <div class="form-group">
+                        <label>Carboidratos (g):</label>
+                        <input type="number" id="manualCarboidratos" placeholder="28">
+                    </div>
+                    <div class="form-group">
+                        <label>Gorduras (g):</label>
+                        <input type="number" id="manualGorduras" placeholder="0.3">
+                    </div>
+                    <button class="btn" onclick="adicionarAlimentoManual()">Adicionar Alimento</button>
+                </div>
+                
+                <button class="btn" onclick="salvarRefeicao()" id="saveMealBtn" style="display: none;">💾 Salvar Refeição</button>
+            </div>
+            
+            <!-- Seção de Refeições Salvas -->
+            <div class="meals-section">
+                <h2>📋 Refeições Salvas</h2>
+                <button class="btn" onclick="carregarRefeicoes()">Atualizar Lista</button>
+                <div id="mealsList"></div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let currentResult = null;
+        let currentImageFile = null;
+        
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const loading = document.getElementById('loading');
+        const resultSection = document.getElementById('resultSection');
+        const resultContent = document.getElementById('resultContent');
+        const manualAddSection = document.getElementById('manualAddSection');
+        const saveMealBtn = document.getElementById('saveMealBtn');
+        
+        // Event listeners
+        uploadArea.addEventListener('click', () => fileInput.click());
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFileSelect(files[0]);
+            }
+        });
+        
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFileSelect(e.target.files[0]);
+            }
+        });
+        
+        uploadBtn.addEventListener('click', async () => {
+            if (!currentImageFile) return;
+            
+            const formData = new FormData();
+            formData.append('file', currentImageFile);
+            
+            loading.style.display = 'block';
+            resultSection.style.display = 'none';
+            uploadBtn.disabled = true;
+            
+            try {
+                const response = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                currentResult = result;
+                displayResult(result);
+            } catch (error) {
+                showError('Erro ao processar imagem: ' + error.message);
+            } finally {
+                loading.style.display = 'none';
+                uploadBtn.disabled = false;
+            }
+        });
+        
+        function handleFileSelect(file) {
+            if (!file.type.startsWith('image/')) {
+                showError('Por favor, selecione uma imagem válida.');
+                return;
+            }
+            
+            currentImageFile = file;
+            uploadBtn.disabled = false;
+            
+            // Preview da imagem
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                uploadArea.innerHTML = `<img src="${e.target.result}" style="max-width: 100%; max-height: 200px; border-radius: 10px;">`;
+            };
+            reader.readAsDataURL(file);
+        }
+        
+        function displayResult(result) {
+            resultSection.style.display = 'block';
+            
+            let html = '';
+            
+            if (result.imagem) {
+                html += `<img src="/uploads/${result.imagem}" class="result-image" alt="Imagem analisada">`;
+            }
+            
+            if (result.alimento_reconhecido) {
+                html += `<h3>Alimento Reconhecido: ${result.alimento_reconhecido}</h3>`;
+                html += `<span class="confidence-badge">Confiança: ${(result.confianca * 100).toFixed(1)}%</span>`;
+            } else {
+                html += `<p class="error">Nenhum alimento reconhecido na imagem.</p>`;
+                manualAddSection.style.display = 'block';
+            }
+            
+            if (result.dados_nutricionais) {
+                html += '<h4>Informações Nutricionais:</h4>';
+                html += '<table class="nutrition-table">';
+                html += '<tr><th>Nutriente</th><th>Valor</th></tr>';
+                
+                const nutrientes = {
+                    'calories': 'Calorias (kcal)',
+                    'protein': 'Proteínas (g)',
+                    'carbohydrate': 'Carboidratos (g)',
+                    'fat': 'Gorduras (g)',
+                    'fiber': 'Fibras (g)',
+                    'sugar': 'Açúcares (g)',
+                    'sodium': 'Sódio (mg)'
+                };
+                
+                for (const [key, label] of Object.entries(nutrientes)) {
+                    const value = result.dados_nutricionais[key];
+                    if (value !== null && value !== undefined) {
+                        html += `<tr><td>${label}</td><td>${value}</td></tr>`;
+                    }
+                }
+                
+                html += '</table>';
+                saveMealBtn.style.display = 'block';
+            } else if (result.alimento_reconhecido) {
+                html += '<p class="error">Dados nutricionais não encontrados para este alimento.</p>';
+                manualAddSection.style.display = 'block';
+            }
+            
+            resultContent.innerHTML = html;
+        }
+        
+        async function adicionarAlimentoManual() {
+            const nome = document.getElementById('manualNome').value;
+            const calorias = parseFloat(document.getElementById('manualCalorias').value) || 0;
+            const proteinas = parseFloat(document.getElementById('manualProteinas').value) || 0;
+            const carboidratos = parseFloat(document.getElementById('manualCarboidratos').value) || 0;
+            const gorduras = parseFloat(document.getElementById('manualGorduras').value) || 0;
+            
+            if (!nome) {
+                showError('Por favor, preencha o nome do alimento.');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/alimento/manual', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        nome,
+                        calorias,
+                        proteinas,
+                        carboidratos,
+                        gorduras
+                    })
+                });
+                
+                const result = await response.json();
+                showSuccess('Alimento adicionado com sucesso!');
+                
+                // Atualizar resultado
+                if (currentResult) {
+                    currentResult.dados_nutricionais = {
+                        calories: calorias,
+                        protein: proteinas,
+                        carbohydrate: carboidratos,
+                        fat: gorduras
+                    };
+                    displayResult(currentResult);
+                }
+                
+                // Limpar formulário
+                document.getElementById('manualNome').value = '';
+                document.getElementById('manualCalorias').value = '';
+                document.getElementById('manualProteinas').value = '';
+                document.getElementById('manualCarboidratos').value = '';
+                document.getElementById('manualGorduras').value = '';
+                manualAddSection.style.display = 'none';
+                saveMealBtn.style.display = 'block';
+            } catch (error) {
+                showError('Erro ao adicionar alimento: ' + error.message);
+            }
+        }
+        
+        async function salvarRefeicao() {
+            if (!currentResult) return;
+            
+            const nome = prompt('Nome da refeição (opcional):') || null;
+            
+            const refeicaoData = {
+                nome: nome,
+                imagem: currentResult.imagem,
+                alimento_reconhecido: currentResult.alimento_reconhecido,
+                confianca: currentResult.confianca,
+                itens: []
+            };
+            
+            // Se houver dados nutricionais, criar item
+            if (currentResult.dados_nutricionais && currentResult.alimento_reconhecido) {
+                // Buscar ou criar alimento
+                try {
+                    const alimentoResponse = await fetch(`/api/buscar-alimento?nome=${encodeURIComponent(currentResult.alimento_reconhecido)}`);
+                    if (alimentoResponse.ok) {
+                        const alimento = await alimentoResponse.json();
+                        refeicaoData.itens.push({
+                            alimento_id: alimento.id,
+                            quantidade: 1.0
+                        });
+                    } else {
+                        // Se não encontrou, adicionar pelo nome
+                        refeicaoData.itens.push({
+                            nome: currentResult.alimento_reconhecido,
+                            dados_nutricionais: currentResult.dados_nutricionais,
+                            quantidade: 1.0
+                        });
+                    }
+                } catch (error) {
+                    // Em caso de erro, adicionar pelo nome
+                    refeicaoData.itens.push({
+                        nome: currentResult.alimento_reconhecido,
+                        dados_nutricionais: currentResult.dados_nutricionais,
+                        quantidade: 1.0
+                    });
+                }
+            }
+            
+            try {
+                const response = await fetch('/api/refeicao', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(refeicaoData)
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.get('error', 'Erro desconhecido'));
+                }
+                
+                const result = await response.json();
+                showSuccess('Refeição salva com sucesso!');
+                carregarRefeicoes();
+            } catch (error) {
+                showError('Erro ao salvar refeição: ' + error.message);
+            }
+        }
+        
+        async function carregarRefeicoes() {
+            try {
+                const response = await fetch('/api/refeicoes');
+                const refeicoes = await response.json();
+                
+                const mealsList = document.getElementById('mealsList');
+                if (refeicoes.length === 0) {
+                    mealsList.innerHTML = '<p>Nenhuma refeição salva ainda.</p>';
+                    return;
+                }
+                
+                let html = '';
+                for (const refeicao of refeicoes) {
+                    html += `<div class="meal-card">`;
+                    html += `<h4>${refeicao.nome || 'Refeição sem nome'}</h4>`;
+                    html += `<p><strong>Alimento:</strong> ${refeicao.alimento_reconhecido || 'N/A'}</p>`;
+                    html += `<p><strong>Itens:</strong> ${refeicao.num_itens || 0}</p>`;
+                    html += `<p><strong>Data:</strong> ${new Date(refeicao.criado_em).toLocaleString('pt-BR')}</p>`;
+                    html += `</div>`;
+                }
+                
+                mealsList.innerHTML = html;
+            } catch (error) {
+                showError('Erro ao carregar refeições: ' + error.message);
+            }
+        }
+        
+        function showError(message) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error';
+            errorDiv.textContent = message;
+            resultContent.appendChild(errorDiv);
+            setTimeout(() => errorDiv.remove(), 5000);
+        }
+        
+        function showSuccess(message) {
+            const successDiv = document.createElement('div');
+            successDiv.className = 'success';
+            successDiv.textContent = message;
+            resultContent.appendChild(successDiv);
+            setTimeout(() => successDiv.remove(), 5000);
+        }
+        
+        // Carregar refeições ao carregar a página
+        window.addEventListener('load', carregarRefeicoes);
+    </script>
+</body>
+</html>
+

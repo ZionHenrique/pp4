@@ -83,6 +83,22 @@ class NutritionDB:
             )
         """)
         
+        # Tabela de feedback/resultados das predições
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS resultados_predicoes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                refeicao_id INTEGER NOT NULL,
+                alimento_predito TEXT NOT NULL,
+                alimento_correto TEXT,
+                confianca REAL,
+                acertou INTEGER DEFAULT 0,
+                observacoes TEXT,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (refeicao_id) REFERENCES refeicoes(id) ON DELETE CASCADE
+            )
+        """)
+        
         conn.commit()
         conn.close()
     
@@ -263,4 +279,146 @@ class NutritionDB:
         conn.commit()
         conn.close()
         return alimento_id
+    
+    def salvar_resultado_predicao(
+        self,
+        refeicao_id: int,
+        alimento_predito: str,
+        confianca: float,
+        alimento_correto: Optional[str] = None,
+        acertou: Optional[bool] = None,
+        observacoes: Optional[str] = None
+    ) -> int:
+        """Salva ou atualiza resultado de uma predição."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Verificar se já existe resultado para esta refeição
+        cursor.execute("SELECT id FROM resultados_predicoes WHERE refeicao_id = ?", (refeicao_id,))
+        resultado_existente = cursor.fetchone()
+        
+        if resultado_existente:
+            # Atualizar resultado existente
+            cursor.execute("""
+                UPDATE resultados_predicoes
+                SET alimento_correto = ?,
+                    acertou = ?,
+                    observacoes = ?,
+                    atualizado_em = CURRENT_TIMESTAMP
+                WHERE refeicao_id = ?
+            """, (alimento_correto, 1 if acertou else 0, observacoes, refeicao_id))
+            resultado_id = resultado_existente[0]
+        else:
+            # Criar novo resultado
+            cursor.execute("""
+                INSERT INTO resultados_predicoes 
+                (refeicao_id, alimento_predito, alimento_correto, confianca, acertou, observacoes)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                refeicao_id,
+                alimento_predito,
+                alimento_correto,
+                confianca,
+                1 if acertou else 0,
+                observacoes
+            ))
+            resultado_id = cursor.lastrowid
+        
+        conn.commit()
+        conn.close()
+        return resultado_id
+    
+    def calcular_acuracia(self) -> Dict[str, Any]:
+        """Calcula estatísticas de acurácia das predições."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Total de predições com feedback
+        cursor.execute("""
+            SELECT COUNT(*) as total,
+                   SUM(acertou) as acertos,
+                   AVG(confianca) as confianca_media
+            FROM resultados_predicoes
+            WHERE alimento_correto IS NOT NULL
+        """)
+        stats = cursor.fetchone()
+        
+        total = stats[0] if stats[0] else 0
+        acertos = stats[1] if stats[1] else 0
+        confianca_media = stats[2] if stats[2] else 0.0
+        
+        acuracia = (acertos / total * 100) if total > 0 else 0.0
+        
+        # Estatísticas por confiança
+        cursor.execute("""
+            SELECT 
+                CASE 
+                    WHEN confianca >= 0.8 THEN 'Alta (>=80%)'
+                    WHEN confianca >= 0.5 THEN 'Média (50-79%)'
+                    ELSE 'Baixa (<50%)'
+                END as faixa_confianca,
+                COUNT(*) as total,
+                SUM(acertou) as acertos,
+                AVG(CASE WHEN acertou = 1 THEN 1.0 ELSE 0.0 END) * 100 as acuracia
+            FROM resultados_predicoes
+            WHERE alimento_correto IS NOT NULL
+            GROUP BY faixa_confianca
+        """)
+        stats_por_confianca = [dict(row) for row in cursor.fetchall()]
+        
+        # Alimentos mais preditos
+        cursor.execute("""
+            SELECT alimento_predito, COUNT(*) as vezes_predito,
+                   AVG(confianca) as confianca_media,
+                   SUM(acertou) * 100.0 / COUNT(*) as acuracia
+            FROM resultados_predicoes
+            WHERE alimento_correto IS NOT NULL
+            GROUP BY alimento_predito
+            ORDER BY vezes_predito DESC
+            LIMIT 10
+        """)
+        alimentos_mais_preditos = [dict(row) for row in cursor.fetchall()]
+        
+        # Últimas predições
+        cursor.execute("""
+            SELECT rp.*, r.imagem_path, r.criado_em
+            FROM resultados_predicoes rp
+            JOIN refeicoes r ON rp.refeicao_id = r.id
+            WHERE rp.alimento_correto IS NOT NULL
+            ORDER BY rp.atualizado_em DESC
+            LIMIT 20
+        """)
+        ultimas_predicoes = [dict(row) for row in cursor.fetchall()]
+        
+        conn.close()
+        
+        return {
+            "total_predicoes": total,
+            "acertos": acertos,
+            "erros": total - acertos,
+            "acuracia_percentual": round(acuracia, 2),
+            "confianca_media": round(confianca_media, 4),
+            "stats_por_confianca": stats_por_confianca,
+            "alimentos_mais_preditos": alimentos_mais_preditos,
+            "ultimas_predicoes": ultimas_predicoes
+        }
+    
+    def listar_resultados_sem_feedback(self, limite: int = 50) -> List[Dict]:
+        """Lista predições que ainda não receberam feedback."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT rp.*, r.imagem_path, r.alimento_reconhecido, r.criado_em
+            FROM resultados_predicoes rp
+            JOIN refeicoes r ON rp.refeicao_id = r.id
+            WHERE rp.alimento_correto IS NULL
+            ORDER BY rp.criado_em DESC
+            LIMIT ?
+        """, (limite,))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return [dict(row) for row in rows]
 

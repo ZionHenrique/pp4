@@ -1,0 +1,26 @@
+{
+  "name": "Análise Nutricional por Imagem",
+  "description": "Sistema de classificação de alimentos e análise nutricional usando Machine Learning",
+  "repository": "https://github.com/seu-usuario/seu-repositorio",
+  "keywords": ["flask", "machine-learning", "food-classification", "nutrition"],
+  "buildpacks": [
+    {
+      "url": "heroku/python"
+    }
+  ],
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "free"
+    }
+  },
+  "env": {
+    "FLASK_ENV": {
+      "value": "production"
+    },
+    "FLASK_DEBUG": {
+      "value": "False"
+    }
+  }
+}
+

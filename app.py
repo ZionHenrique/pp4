@@ -209,35 +209,64 @@ def upload():
     
     # Salvar resultado no banco de dados
     dados_nutricionais = None
+    refeicao_id = None
     try:
+        # Sempre salvar a análise da imagem no banco de dados
         refeicao_id = db.criar_refeicao(
             nome=f"Predição {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             imagem_path=str(filepath),
             alimento_reconhecido=alimento,
             confianca=confianca
         )
+        print(f"[INFO] ✅ Análise salva no banco (refeicao_id: {refeicao_id})")
         
         # Buscar informações nutricionais do alimento reconhecido
         dados_nutricionais = db.buscar_alimento(alimento)
         if dados_nutricionais:
             # Adicionar o alimento à refeição
-            db.adicionar_item_refeicao(refeicao_id, dados_nutricionais["id"], 1.0)
-            print(f"[INFO] Dados nutricionais encontrados e salvos para {alimento}")
+            try:
+                db.adicionar_item_refeicao(refeicao_id, dados_nutricionais["id"], 1.0)
+                print(f"[INFO] ✅ Dados nutricionais encontrados e salvos para {alimento}")
+            except Exception as e2:
+                print(f"[WARN] Erro ao adicionar item à refeição: {e2}")
         else:
-            print(f"[WARN] Dados nutricionais não encontrados para {alimento}")
-        
-        print(f"[INFO] Resultado salvo no banco (refeicao_id: {refeicao_id})")
+            print(f"[WARN] Dados nutricionais não encontrados para '{alimento}' no banco")
+            # Tentar buscar com variações do nome
+            alimento_lower = alimento.lower()
+            alimentos_disponiveis = db.listar_alimentos(limite=1000)
+            for alimento_db in alimentos_disponiveis:
+                if alimento_lower in alimento_db.get("nome", "").lower() or alimento_db.get("nome", "").lower() in alimento_lower:
+                    dados_nutricionais = alimento_db
+                    try:
+                        db.adicionar_item_refeicao(refeicao_id, dados_nutricionais["id"], 1.0)
+                        print(f"[INFO] ✅ Dados nutricionais encontrados por similaridade: {alimento_db.get('nome')}")
+                        break
+                    except Exception:
+                        pass
         
     except Exception as e:
-        print(f"[ERROR] Erro ao salvar no banco: {e}")
+        print(f"[ERROR] ❌ Erro ao salvar no banco: {e}")
         traceback.print_exc()
+        # Mesmo com erro, continuar para retornar a resposta
+    
+    # Salvar resultado da predição (sem feedback ainda)
+    if refeicao_id:
+        try:
+            db.salvar_resultado_predicao(
+                refeicao_id=refeicao_id,
+                alimento_predito=alimento,
+                confianca=confianca
+            )
+        except Exception as e:
+            print(f"[WARN] Erro ao salvar resultado da predição: {e}")
     
     # Preparar resposta
     resposta = {
         "imagem": filename,
         "alimento_reconhecido": alimento,
         "confianca": round(confianca, 4),
-        "top_3": info_extra.get("top_3", [])
+        "top_3": info_extra.get("top_3", []),
+        "refeicao_id": refeicao_id
     }
     
     # Adicionar dados nutricionais se disponíveis
@@ -284,7 +313,98 @@ def obter_refeicao(refeicao_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/feedback", methods=["POST"])
+def registrar_feedback():
+    """Endpoint para registrar feedback do usuário sobre uma predição."""
+    try:
+        data = request.get_json()
+        refeicao_id = data.get("refeicao_id")
+        alimento_correto = data.get("alimento_correto")
+        acertou = data.get("acertou", False)
+        observacoes = data.get("observacoes", "")
+        
+        if not refeicao_id:
+            return jsonify({"error": "refeicao_id é obrigatório"}), 400
+        
+        # Buscar predição original
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT alimento_reconhecido, confianca FROM refeicoes WHERE id = ?", (refeicao_id,))
+        refeicao = cursor.fetchone()
+        conn.close()
+        
+        if not refeicao:
+            return jsonify({"error": "Refeição não encontrada"}), 404
+        
+        alimento_predito = refeicao[0]
+        confianca = refeicao[1]
+        
+        # Se não forneceu alimento correto, usar o predito
+        if not alimento_correto:
+            alimento_correto = alimento_predito
+        
+        # Determinar se acertou baseado no feedback ou comparação
+        if acertou is None:
+            acertou = alimento_predito.lower() == alimento_correto.lower()
+        
+        # Salvar feedback
+        resultado_id = db.salvar_resultado_predicao(
+            refeicao_id=refeicao_id,
+            alimento_predito=alimento_predito,
+            confianca=confianca,
+            alimento_correto=alimento_correto,
+            acertou=acertou,
+            observacoes=observacoes
+        )
+        
+        return jsonify({
+            "success": True,
+            "resultado_id": resultado_id,
+            "message": "Feedback registrado com sucesso"
+        })
+        
+    except Exception as e:
+        print(f"[ERROR] Erro ao registrar feedback: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/estatisticas", methods=["GET"])
+def obter_estatisticas():
+    """Endpoint para obter estatísticas de acurácia."""
+    try:
+        stats = db.calcular_acuracia()
+        return jsonify(stats)
+    except Exception as e:
+        print(f"[ERROR] Erro ao calcular estatísticas: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/predicoes-sem-feedback", methods=["GET"])
+def listar_predicoes_sem_feedback():
+    """Endpoint para listar predições que ainda não receberam feedback."""
+    try:
+        limite = request.args.get("limite", 50, type=int)
+        predicoes = db.listar_resultados_sem_feedback(limite=limite)
+        return jsonify({"predicoes": predicoes, "total": len(predicoes)})
+    except Exception as e:
+        print(f"[ERROR] Erro ao listar predições: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
-    print("Servidor rodando...")
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    import os
+    port = int(os.environ.get("PORT", 5000))
+    debug = os.environ.get("FLASK_DEBUG", "True").lower() == "true"
+    
+    print("="*60)
+    print("🚀 SERVIDOR FLASK INICIANDO")
+    print("="*60)
+    print(f"Porta: {port}")
+    print(f"Debug: {debug}")
+    print(f"Modelos carregados: {rf_model is not None}")
+    print("="*60)
+    
+    app.run(host="0.0.0.0", port=port, debug=debug)
 

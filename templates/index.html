@@ -218,6 +218,102 @@
             border-radius: 10px;
             margin: 20px 0;
         }
+        
+        .feedback-section {
+            margin-top: 20px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+        }
+        
+        .feedback-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .btn-feedback {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+        
+        .btn-correct {
+            background: #28a745;
+            color: white;
+        }
+        
+        .btn-correct:hover {
+            background: #218838;
+        }
+        
+        .btn-incorrect {
+            background: #dc3545;
+            color: white;
+        }
+        
+        .btn-incorrect:hover {
+            background: #c82333;
+        }
+        
+        .stats-card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 10px 0;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        
+        .stat-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .stat-label {
+            font-weight: bold;
+        }
+        
+        .stat-value {
+            color: #667eea;
+            font-size: 1.2em;
+        }
+        
+        .acuracia-badge {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+        
+        .acuracia-alta {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .acuracia-media {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        .acuracia-baixa {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
     </style>
 </head>
 <body>
@@ -250,6 +346,13 @@
                 </div>
                 
                 <button class="btn" onclick="salvarRefeicao()" id="saveMealBtn" style="display: none;">💾 Salvar Refeição</button>
+            </div>
+            
+            <!-- Seção de Estatísticas -->
+            <div class="meals-section">
+                <h2>📊 Estatísticas de Acurácia</h2>
+                <button class="btn" onclick="carregarEstatisticas()">Atualizar Estatísticas</button>
+                <div id="statsContent"></div>
             </div>
             
             <!-- Seção de Refeições Salvas -->
@@ -354,11 +457,128 @@
                 html += `<h3>Alimento Reconhecido: ${result.alimento_reconhecido}</h3>`;
                 html += `<span class="confidence-badge">Confiança: ${(result.confianca * 100).toFixed(1)}%</span>`;
                 saveMealBtn.style.display = 'block';
+                
+                // Adicionar seção de feedback
+                html += `<div class="feedback-section">`;
+                html += `<h4>💬 A predição está correta?</h4>`;
+                html += `<p>Ajude a melhorar o modelo informando se a predição está correta:</p>`;
+                html += `<label>Alimento correto (se diferente):</label>`;
+                html += `<input type="text" id="alimentoCorretoInput" placeholder="${result.alimento_reconhecido}">`;
+                html += `<div class="feedback-buttons">`;
+                html += `<button class="btn-feedback btn-correct" onclick="registrarFeedback(true, ${result.refeicao_id || 'null'})">✅ Correto</button>`;
+                html += `<button class="btn-feedback btn-incorrect" onclick="registrarFeedback(false, ${result.refeicao_id || 'null'})">❌ Incorreto</button>`;
+                html += `</div>`;
+                html += `</div>`;
             } else {
                 html += `<p class="error">Nenhum alimento reconhecido na imagem.</p>`;
             }
             
             resultContent.innerHTML = html;
+        }
+        
+        async function registrarFeedback(acertou, refeicaoId) {
+            if (!refeicaoId) {
+                showError('ID da refeição não disponível');
+                return;
+            }
+            
+            const alimentoCorretoInput = document.getElementById('alimentoCorretoInput');
+            const alimentoCorreto = alimentoCorretoInput ? alimentoCorretoInput.value.trim() : null;
+            
+            try {
+                const response = await fetch('/api/feedback', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        refeicao_id: refeicaoId,
+                        alimento_correto: alimentoCorreto || null,
+                        acertou: acertou,
+                        observacoes: ''
+                    })
+                });
+                
+                const result = await response.json();
+                if (response.ok) {
+                    showSuccess('Feedback registrado com sucesso! Obrigado por ajudar a melhorar o modelo.');
+                    // Atualizar estatísticas
+                    carregarEstatisticas();
+                } else {
+                    showError('Erro ao registrar feedback: ' + (result.error || 'Erro desconhecido'));
+                }
+            } catch (error) {
+                showError('Erro ao registrar feedback: ' + error.message);
+            }
+        }
+        
+        async function carregarEstatisticas() {
+            try {
+                const response = await fetch('/api/estatisticas');
+                const stats = await response.json();
+                
+                const statsContent = document.getElementById('statsContent');
+                let html = '';
+                
+                if (stats.total_predicoes === 0) {
+                    html = '<p>Nenhuma predição com feedback ainda. Faça upload de imagens e forneça feedback para ver as estatísticas!</p>';
+                } else {
+                    // Card principal de acurácia
+                    html += '<div class="stats-card">';
+                    html += '<h3>📊 Acurácia Geral</h3>';
+                    html += `<div class="stat-item">`;
+                    html += `<span class="stat-label">Total de Predições:</span>`;
+                    html += `<span class="stat-value">${stats.total_predicoes}</span>`;
+                    html += `</div>`;
+                    html += `<div class="stat-item">`;
+                    html += `<span class="stat-label">Acertos:</span>`;
+                    html += `<span class="stat-value" style="color: #28a745;">${stats.acertos}</span>`;
+                    html += `</div>`;
+                    html += `<div class="stat-item">`;
+                    html += `<span class="stat-label">Erros:</span>`;
+                    html += `<span class="stat-value" style="color: #dc3545;">${stats.erros}</span>`;
+                    html += `</div>`;
+                    html += `<div class="stat-item">`;
+                    html += `<span class="stat-label">Acurácia:</span>`;
+                    const acuraciaClass = stats.acuracia_percentual >= 70 ? 'acuracia-alta' : 
+                                        stats.acuracia_percentual >= 50 ? 'acuracia-media' : 'acuracia-baixa';
+                    html += `<span class="acuracia-badge ${acuraciaClass}">${stats.acuracia_percentual}%</span>`;
+                    html += `</div>`;
+                    html += `<div class="stat-item">`;
+                    html += `<span class="stat-label">Confiança Média:</span>`;
+                    html += `<span class="stat-value">${(stats.confianca_media * 100).toFixed(1)}%</span>`;
+                    html += `</div>`;
+                    html += '</div>';
+                    
+                    // Estatísticas por faixa de confiança
+                    if (stats.stats_por_confianca && stats.stats_por_confianca.length > 0) {
+                        html += '<div class="stats-card">';
+                        html += '<h3>📈 Acurácia por Nível de Confiança</h3>';
+                        for (const stat of stats.stats_por_confianca) {
+                            html += `<div class="stat-item">`;
+                            html += `<span class="stat-label">${stat.faixa_confianca}:</span>`;
+                            html += `<span class="stat-value">${parseFloat(stat.acuracia).toFixed(1)}% (${stat.acertos}/${stat.total})</span>`;
+                            html += `</div>`;
+                        }
+                        html += '</div>';
+                    }
+                    
+                    // Alimentos mais preditos
+                    if (stats.alimentos_mais_preditos && stats.alimentos_mais_preditos.length > 0) {
+                        html += '<div class="stats-card">';
+                        html += '<h3>🍽️ Alimentos Mais Preditos</h3>';
+                        for (const alimento of stats.alimentos_mais_preditos) {
+                            html += `<div class="stat-item">`;
+                            html += `<span class="stat-label">${alimento.alimento_predito}:</span>`;
+                            html += `<span class="stat-value">${parseFloat(alimento.acuracia).toFixed(1)}% (${alimento.vezes_predito}x)</span>`;
+                            html += `</div>`;
+                        }
+                        html += '</div>';
+                    }
+                }
+                
+                statsContent.innerHTML = html;
+            } catch (error) {
+                showError('Erro ao carregar estatísticas: ' + error.message);
+            }
         }
         
         async function salvarRefeicao() {
@@ -464,8 +684,11 @@
             setTimeout(() => successDiv.remove(), 5000);
         }
         
-        // Carregar refeições ao carregar a página
-        window.addEventListener('load', carregarRefeicoes);
+        // Carregar refeições e estatísticas ao carregar a página
+        window.addEventListener('load', () => {
+            carregarRefeicoes();
+            carregarEstatisticas();
+        });
     </script>
 </body>
 </html>

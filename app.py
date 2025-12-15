@@ -9,6 +9,7 @@ import numpy as np
 from PIL import Image
 import joblib
 from skimage.feature import hog
+from skimage import color
 
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
@@ -34,15 +35,16 @@ try:
     rf_model = joblib.load(MODEL_DIR / "rf_food_classifier.joblib")
     scaler = joblib.load(MODEL_DIR / "scaler.joblib")
     label_encoder = joblib.load(MODEL_DIR / "label_encoder.joblib")
-    print("✓ Modelos carregados com sucesso")
+    print("[OK] Modelos carregados com sucesso")
     try:
         classes = getattr(label_encoder, 'classes_', None)
         if classes is not None:
-            print(f"✓ Label encoder com {len(classes)} classes")
+            print(f"[OK] Label encoder com {len(classes)} classes")
+            print(f"[INFO] Classes disponiveis: {list(classes)}")
     except Exception:
         pass
 except Exception as e:
-    print(f"✗ Erro ao carregar modelos: {e}")
+    print(f"[ERRO] Erro ao carregar modelos: {e}")
     traceback.print_exc()
 
 def allowed_file(filename):
@@ -55,7 +57,10 @@ def extract_hog_features(image_path):
     Estratégia:
     - Consulta `scaler.n_features_in_` (se disponível) e tenta produzir features
       com esse tamanho.
-    - Suporta HOG (para o modelo treinado com HOG) e flatten RGB (por ex. 64x64x3=12288).
+    - Suporta:
+      * HOG apenas
+      * RGB flatten (64x64x3=12288 ou 96x96x3=27648)
+      * Features combinadas (HOG + RGB) - melhor precisão
     - Tenta múltiplos formatos automaticamente e retorna o array transformado.
     """
     # Carregar imagem em RGB
@@ -67,50 +72,71 @@ def extract_hog_features(image_path):
     except Exception:
         expected = None
 
-    # 1) tentar HOG com tamanho 128x128 (produz 1764 para os parâmetros usados)
-    img_hog = img.resize((128, 128))
-    img_gray = np.mean(np.array(img_hog), axis=2)
-    features_hog = hog(
-        img_gray,
-        orientations=9,
-        pixels_per_cell=(16, 16),
-        cells_per_block=(2, 2),
-        block_norm="L2-Hys"
-    )
-
-    # 2) tentar flatten RGB em 64x64
-    img_flat = img.resize((64, 64))
-    arr_flat = np.array(img_flat).astype(np.float32)
-    features_flat = arr_flat.flatten()
-
-    # Escolher qual usar com base em expected
-    chosen = None
-    if expected is not None:
-        print(f"[DEBUG] Scaler espera {expected} features")
-        if expected == features_hog.size:
-            chosen = ('hog', features_hog)
-        elif expected == features_flat.size:
-            chosen = ('flat64', features_flat)
-
-    # Se não escolheu ainda, priorizar HOG, mas se scaler falhar, tentar flat
-    if chosen is None:
-        # preferir HOG
-        try:
-            X = np.array([features_hog])
-            return scaler.transform(X)
-        except Exception:
-            try:
-                X = np.array([features_flat])
+    # Tentar diferentes tamanhos e métodos
+    img_sizes = [96, 64, 128]  # Priorizar 96x96 (novo padrão)
+    
+    for img_size in img_sizes:
+        # 1) Features RGB normalizadas
+        img_rgb = img.resize((img_size, img_size))
+        arr_rgb = np.array(img_rgb).astype(np.float32) / 255.0
+        features_rgb = arr_rgb.flatten()
+        
+        # 2) Features HOG
+        img_gray = color.rgb2gray(arr_rgb)
+        features_hog = hog(
+            img_gray,
+            orientations=9,
+            pixels_per_cell=(8, 8),
+            cells_per_block=(2, 2),
+            visualize=False
+        )
+        
+        # 3) Features combinadas (HOG + RGB) - melhor precisão
+        features_combined = np.concatenate([features_rgb, features_hog])
+        
+        # Verificar qual formato corresponde ao esperado
+        if expected is not None:
+            if expected == features_combined.size:
+                # Features combinadas (padrão melhorado)
+                X = np.array([features_combined])
                 return scaler.transform(X)
-            except Exception:
-                # por fim, raise para o caller logar
-                raise
-
-    # Se escolheu explicitamente, aplicar scaler
-    name, feats = chosen
-    print(f"[DEBUG] Usando features: {name} (len={feats.size})")
-    X = np.array([feats])
-    return scaler.transform(X)
+            elif expected == features_rgb.size:
+                # Apenas RGB
+                X = np.array([features_rgb])
+                return scaler.transform(X)
+            elif expected == features_hog.size:
+                # Apenas HOG
+                X = np.array([features_hog])
+                return scaler.transform(X)
+    
+    # Se não encontrou correspondência exata, tentar features combinadas (mais comum agora)
+    try:
+        img_size = 96
+        img_rgb = img.resize((img_size, img_size))
+        arr_rgb = np.array(img_rgb).astype(np.float32) / 255.0
+        features_rgb = arr_rgb.flatten()
+        img_gray = color.rgb2gray(arr_rgb)
+        features_hog = hog(
+            img_gray,
+            orientations=9,
+            pixels_per_cell=(8, 8),
+            cells_per_block=(2, 2),
+            visualize=False
+        )
+        features_combined = np.concatenate([features_rgb, features_hog])
+        X = np.array([features_combined])
+        return scaler.transform(X)
+    except Exception as e1:
+        # Fallback para apenas RGB
+        try:
+            img_size = 96
+            img_rgb = img.resize((img_size, img_size))
+            arr_rgb = np.array(img_rgb).astype(np.float32) / 255.0
+            features_rgb = arr_rgb.flatten()
+            X = np.array([features_rgb])
+            return scaler.transform(X)
+        except Exception as e2:
+            raise Exception(f"Erro ao extrair features: {e1}, fallback: {e2}")
 
 
 def predict(image_path):

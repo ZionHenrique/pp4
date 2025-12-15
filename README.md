@@ -59,9 +59,9 @@ python app.py
 ```
 
 3. Acesse no navegador:
-```
-http://localhost:5000
-```
+   ```
+   http://localhost:5000
+   ```
 
 ## 📁 Estrutura do Projeto
 

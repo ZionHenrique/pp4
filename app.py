@@ -29,30 +29,79 @@ Path(app.config["UPLOAD_FOLDER"]).mkdir(exist_ok=True)
 db = NutritionDB()
 
 # ============
-# CARREGAR MODELOS
+# CARREGAR MODELOS (centralizado)
 # ============
 MODEL_DIR = Path.cwd() / "modelos_salvos"
 
-# Carregar modelos com tratamento de erro para não travar o processo
+# Objetos globais de modelo
 rf_model = None
+svm_model = None
 scaler = None
 label_encoder = None
-try:
-    print(f"Carregando modelos de: {MODEL_DIR}")
-    rf_model = joblib.load(MODEL_DIR / "rf_food_classifier.joblib")
-    scaler = joblib.load(MODEL_DIR / "scaler.joblib")
-    label_encoder = joblib.load(MODEL_DIR / "label_encoder.joblib")
-    print("[OK] Modelos carregados com sucesso")
+current_model = None  # 'rf' ou 'svm'
+
+
+def load_models():
+    """Carrega modelos do diretório `modelos_salvos` e define o modelo ativo.
+    Retorna um dicionário com o status de cada artefato carregado.
+    """
+    global rf_model, svm_model, scaler, label_encoder, current_model
+    loaded = {"rf": False, "svm": False, "scaler": False, "label_encoder": False}
     try:
-        classes = getattr(label_encoder, 'classes_', None)
-        if classes is not None:
-            print(f"[OK] Label encoder com {len(classes)} classes")
-            print(f"[INFO] Classes disponiveis: {list(classes)}")
-    except Exception:
-        pass
-except Exception as e:
-    print(f"[ERRO] Erro ao carregar modelos: {e}")
-    traceback.print_exc()
+        print(f"Carregando modelos de: {MODEL_DIR}")
+        if (MODEL_DIR / "rf_food_classifier.joblib").exists():
+            rf_model = joblib.load(MODEL_DIR / "rf_food_classifier.joblib")
+            loaded["rf"] = True
+            print("[OK] Random Forest carregado")
+        else:
+            rf_model = None
+            print("[WARN] rf_food_classifier.joblib não encontrado")
+
+        if (MODEL_DIR / "svm_food_classifier.joblib").exists():
+            svm_model = joblib.load(MODEL_DIR / "svm_food_classifier.joblib")
+            loaded["svm"] = True
+            print("[OK] SVM carregado")
+        else:
+            svm_model = None
+
+        if (MODEL_DIR / "scaler.joblib").exists():
+            scaler = joblib.load(MODEL_DIR / "scaler.joblib")
+            loaded["scaler"] = True
+            print("[OK] Scaler carregado")
+        else:
+            scaler = None
+
+        if (MODEL_DIR / "label_encoder.joblib").exists():
+            label_encoder = joblib.load(MODEL_DIR / "label_encoder.joblib")
+            loaded["label_encoder"] = True
+            print("[OK] Label encoder carregado")
+            try:
+                classes = getattr(label_encoder, 'classes_', None)
+                if classes is not None:
+                    print(f"[INFO] Label encoder com {len(classes)} classes")
+            except Exception:
+                pass
+        else:
+            label_encoder = None
+
+    except Exception as e:
+        print(f"[ERRO] Erro ao carregar modelos: {e}")
+        traceback.print_exc()
+
+    # Escolher modelo padrão
+    if loaded["rf"]:
+        current_model = "rf"
+    elif loaded["svm"]:
+        current_model = "svm"
+    else:
+        current_model = None
+
+    return loaded
+
+
+# Carregar modelos na inicialização
+_loaded_status = load_models()
+print(f"[INFO] Modelos carregados: {_loaded_status}, modelo ativo: {current_model}")
 
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in app.config["ALLOWED_EXTENSIONS"]
@@ -141,33 +190,68 @@ def extract_hog_features(image_path):
 
 
 def predict(image_path):
-    """Realiza predição com melhorias para maior precisão."""
-    if rf_model is None or scaler is None or label_encoder is None:
+    """Realiza predição com o modelo ativo (RandomForest ou SVM)."""
+    if current_model is None or label_encoder is None:
         print("[WARN] Modelos não carregados - retornando fallback")
+        return "alimento_desconhecido", 0.0, {}
+
+    # Selecionar modelo ativo
+    model = rf_model if current_model == "rf" else svm_model if current_model == "svm" else None
+    if model is None:
+        print("[WARN] Modelo ativo não disponível - retornando fallback")
         return "alimento_desconhecido", 0.0, {}
 
     try:
         # Extrair features melhoradas
         x = extract_hog_features(image_path)
-        
-        # Predição com probabilidades
-        pred = rf_model.predict(x)[0]
-        proba_array = rf_model.predict_proba(x)[0]
-        proba_max = float(max(proba_array))
-        
-        # Obter top 3 predições para maior confiabilidade
-        top_indices = np.argsort(proba_array)[-3:][::-1]
+
+        # Efetuar predição
+        pred = model.predict(x)[0]
+
+        # Tentar obter probabilidades
+        proba_array = None
+        proba_max = 0.0
+        if hasattr(model, "predict_proba"):
+            try:
+                proba_array = model.predict_proba(x)[0]
+                proba_max = float(max(proba_array))
+            except Exception:
+                proba_array = None
+                proba_max = 0.0
+        elif hasattr(model, "decision_function"):
+            try:
+                scores = model.decision_function(x)[0]
+                if hasattr(scores, "__len__") and len(scores) > 1:
+                    exp = np.exp(scores - np.max(scores))
+                    probs = exp / exp.sum()
+                    proba_array = probs
+                    proba_max = float(np.max(probs))
+                else:
+                    proba_max = float(1.0 / (1.0 + np.exp(-float(scores))))
+            except Exception:
+                proba_max = 0.0
+        else:
+            proba_max = 1.0
+
+        # Top 3 predições
         top_predictions = []
-        for idx in top_indices:
-            label = label_encoder.inverse_transform([idx])[0]
-            prob = float(proba_array[idx])
-            top_predictions.append({"alimento": label, "confianca": prob})
-        
-        label = label_encoder.inverse_transform([pred])[0]
-        
-        # Retornar predição principal e top 3
+        if proba_array is not None and label_encoder is not None:
+            top_indices = np.argsort(proba_array)[-3:][::-1]
+            for idx in top_indices:
+                try:
+                    label = label_encoder.inverse_transform([idx])[0]
+                except Exception:
+                    label = str(idx)
+                prob = float(proba_array[idx])
+                top_predictions.append({"alimento": label, "confianca": prob})
+
+        try:
+            label = label_encoder.inverse_transform([pred])[0]
+        except Exception:
+            label = str(pred)
+
         return label, proba_max, {"top_3": top_predictions}
-        
+
     except Exception as e:
         print(f"Erro durante predição: {e}")
         traceback.print_exc()
@@ -279,6 +363,40 @@ def upload():
         }
     
     return jsonify(resposta)
+
+
+@app.route("/api/reload-models", methods=["POST"]) 
+def reload_models():
+    """Força recarregamento dos modelos a partir de disco."""
+    try:
+        loaded = load_models()
+        return jsonify({"success": True, "loaded": loaded, "current_model": current_model})
+    except Exception as e:
+        print(f"[ERROR] Erro ao recarregar modelos: {e}")
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/use-model", methods=["POST"]) 
+def use_model():
+    """Seleciona o modelo ativo: enviar JSON {"model": "rf"} ou {"model": "svm"}"""
+    try:
+        data = request.get_json(silent=True) or {}
+        model_name = data.get("model") or request.args.get("model")
+        if model_name not in ("rf", "svm"):
+            return jsonify({"success": False, "error": "model must be 'rf' or 'svm'"}), 400
+        global current_model
+        if model_name == "rf" and rf_model is None:
+            return jsonify({"success": False, "error": "rf model not loaded"}), 400
+        if model_name == "svm" and svm_model is None:
+            return jsonify({"success": False, "error": "svm model not loaded"}), 400
+        current_model = model_name
+        print(f"[INFO] Modelo ativo alterado para: {current_model}")
+        return jsonify({"success": True, "current_model": current_model})
+    except Exception as e:
+        print(f"[ERROR] Erro ao alterar modelo ativo: {e}")
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route("/uploads/<filename>")
